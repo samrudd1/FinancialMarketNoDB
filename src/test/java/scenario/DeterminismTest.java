@@ -70,10 +70,9 @@ class DeterminismTest extends GlobalStateFixture {
         // ── first run ─────────────────────────────────────────────────────────
         setUpAndRun();
 
-        int firstDefault    = (int) Exchange.getDefaultCount();
-        int firstSentiment  = (int) Exchange.getSentCount();
-        int firstRsi        = (int) Exchange.getRsiCount();
-        int firstAggressive = (int) Exchange.getAggressiveCount();
+        int firstDefault   = (int) Exchange.getDefaultCount();
+        int firstSentiment = (int) Exchange.getSentCount();
+        int firstRsi       = (int) Exchange.getRsiCount();
 
         // ── reset and second run ──────────────────────────────────────────────
         resetGlobalState();
@@ -90,10 +89,6 @@ class DeterminismTest extends GlobalStateFixture {
         assertThat((int) Exchange.getRsiCount())
                 .as("RSI trade count must be identical across seeded runs")
                 .isEqualTo(firstRsi);
-
-        assertThat((int) Exchange.getAggressiveCount())
-                .as("AggressiveOffers trade count must be identical across seeded runs")
-                .isEqualTo(firstAggressive);
     }
 
     private void setUpAndRun() throws Exception {

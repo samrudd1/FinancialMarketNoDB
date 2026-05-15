@@ -8,7 +8,6 @@ import javafx.scene.control.SplitPane;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.JFreeChart;
 import org.jfree.chart.axis.CategoryAxis;
-import org.jfree.chart.axis.LogarithmicAxis;
 import org.jfree.chart.axis.NumberAxis;
 import org.jfree.chart.fx.ChartViewer;
 import org.jfree.chart.plot.CategoryPlot;
@@ -47,9 +46,8 @@ final class StrategiesTab {
 
     private static JFreeChart buildCountsChart(Map<Integer, String> names) {
         DefaultCategoryDataset ds = new DefaultCategoryDataset();
-        ds.addValue(Exchange.getDefaultCount(),    "Trades", names.get(0));
-        ds.addValue(Exchange.getAggressiveCount(), "Trades", names.get(1));
-        ds.addValue(Exchange.getSentCount(),       "Trades", names.get(2));
+        ds.addValue(Exchange.getDefaultCount(), "Trades", names.get(0));
+        ds.addValue(Exchange.getSentCount(),    "Trades", names.get(2));
         ds.addValue(Exchange.getOfferCount(),      "Trades", names.get(3));
         ds.addValue(Exchange.getRsiCount(),        "Trades", names.get(4));
         ds.addValue(Exchange.getRsi10Count(),      "Trades", names.get(5));
@@ -57,7 +55,7 @@ final class StrategiesTab {
         if (Agent.isVolatility()) {
             ds.addValue(Exchange.getVwapCount(),    "Trades", names.get(7));
             ds.addValue(Exchange.getMomCount(),     "Trades", names.get(8));
-            ds.addValue(Exchange.getMomVwapCount(), "Trades", names.get(9));
+            ds.addValue(Exchange.getVwapMRCount(), "Trades", names.get(9));
         }
 
         JFreeChart chart = ChartFactory.createBarChart(
@@ -65,13 +63,6 @@ final class StrategiesTab {
                 "Strategy", "Trades", ds,
                 PlotOrientation.VERTICAL, false, true, false);
         styleBarChart(chart, new Color(40, 90, 200));
-
-        // swap to log axis so low-frequency strategies remain visible
-        LogarithmicAxis logAxis = new LogarithmicAxis("Trades");
-        logAxis.setAllowNegativesFlag(false);
-        logAxis.setStrictValuesFlag(false); // allow 0 values — rendered at floor
-        logAxis.setAutoRangeIncludesZero(false);
-        chart.getCategoryPlot().setRangeAxis(logAxis);
 
         return chart;
     }
@@ -128,7 +119,6 @@ final class StrategiesTab {
     private static Map<Integer, String> strategyNames() {
         Map<Integer, String> m = new LinkedHashMap<>();
         m.put(0, "Default");
-        m.put(1, "Aggressive");
         m.put(2, "Sentiment");
         m.put(3, "Offer only");
         m.put(4, "RSI 14");
@@ -137,7 +127,7 @@ final class StrategiesTab {
         if (Agent.isVolatility()) {
             m.put(7, "VWAP");
             m.put(8, "Momentum");
-            m.put(9, "Mom + VWAP");
+            m.put(9, "VWAP MR");
         }
         return m;
     }

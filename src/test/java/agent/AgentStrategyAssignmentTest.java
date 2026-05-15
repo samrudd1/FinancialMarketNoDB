@@ -32,7 +32,7 @@ class AgentStrategyAssignmentTest extends GlobalStateFixture {
         for (int i = 0; i < 60; i++) {
             Agent agent = new Agent();
             assertThat(agent.getStrategy())
-                    .as("strategies 7, 8, 9 (VWAP, Momentum, VWAP+Momentum) should be excluded when volatility=false")
+                    .as("strategies 7, 8, 9 (VWAP, Momentum, VWAP Mean Reversion) should be excluded when volatility=false")
                     .isNotIn(7, 8, 9);
         }
     }
@@ -55,15 +55,14 @@ class AgentStrategyAssignmentTest extends GlobalStateFixture {
             Agent agent = new Agent();
             int s = agent.getStrategy();
             String name = agent.getName();
-            if      (s == 1) assertThat(name).startsWith("Aggressive Offers ");
-            else if (s == 2) assertThat(name).startsWith("Sentiment Trend ");
+            if      (s == 2) assertThat(name).startsWith("Sentiment Trend ");
             else if (s == 3) assertThat(name).startsWith("Offer Only ");
             else if (s == 4) assertThat(name).startsWith("RSI ");
             else if (s == 5) assertThat(name).startsWith("RSI10 ");
             else if (s == 6) assertThat(name).startsWith("Both RSI ");
             else if (s == 7) assertThat(name).startsWith("VWAP ");
             else if (s == 8) assertThat(name).startsWith("Momentum ");
-            else if (s == 9) assertThat(name).startsWith("VWAP and Momentum ");
+            else if (s == 9) assertThat(name).startsWith("VWAP Mean Reversion ");
             else              assertThat(name).startsWith("Default ");
         }
     }

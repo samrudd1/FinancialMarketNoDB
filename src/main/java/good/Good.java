@@ -399,6 +399,27 @@ public class Good {
     }
 
     /**
+     * Volume-weighted average price across the most recent {@code window} trades.
+     * Use this in preference to {@link #getVwap()} for any signal that needs to
+     * stay responsive in long simulations — the cumulative VWAP barely moves
+     * after a few thousand trades, which makes it useless as a fair-value proxy.
+     * Falls back to the current price when there's no trade history at all.
+     */
+    public static float getRollingVwap(int window) {
+        int size = tradeData.size();
+        if (size == 0) return price;
+        int from = Math.max(0, size - window);
+        double pv = 0;
+        double v = 0;
+        for (int i = from; i < size; i++) {
+            TradeData td = tradeData.get(i);
+            pv += (double) td.getPrice() * td.getVolume();
+            v  += td.getVolume();
+        }
+        return v > 0 ? (float) (pv / v) : price;
+    }
+
+    /**
      * creates the starting price for the stock to be offered
      */
     private void createPrice(){

@@ -1,6 +1,7 @@
 package trade;
 
 import agent.Agent;
+import agent.BookEvent;
 import agent.OwnedGood;
 import agent.Trade;
 import good.Good;
@@ -52,12 +53,11 @@ public class Exchange {
     @Getter private static float sentCount = 0;
     @Getter private static float momCount = 0;
     @Getter private static float vwapCount = 0;
-    @Getter private static float momVwapCount = 0;
+    @Getter private static float vwapMRCount = 0;
     @Getter private static float rsiCount = 0;
     @Getter private static float rsi10Count = 0;
     @Getter private static float bothCount = 0;
     @Getter private static float offerCount = 0;
-    @Getter private static float aggressiveCount = 0;
 
     @Getter private static int round = 0; //current round
     private static boolean newRound = false; //if new round has started
@@ -71,6 +71,20 @@ public class Exchange {
     @Getter @Setter private static boolean signalLogging; //toggles if logs are kept
     @Getter private static final ArrayList<Integer> sentimentList = new ArrayList<>(); //per-round sentiment value, fed to dashboard
     @Getter private static final ArrayList<Float> vwapList = new ArrayList<>(); //per-round VWAP snapshot, fed to dashboard
+
+    /**
+     * Rate of change of price over the last {@code window} rounds.
+     * Returns {@code (lastPrice - roundFinalPrice[size-1-window]) / roundFinalPrice[size-1-window]},
+     * or 0 when there isn't enough closing-price history yet.
+     * Used by Momentum to detect sustained trends instead of single-round noise.
+     */
+    public static float getPriceRoc(int window) {
+        int size = roundFinalPrice.size();
+        if (size <= window || window <= 0) return 0f;
+        float past = roundFinalPrice.get(size - 1 - window);
+        if (past <= 0f) return 0f;
+        return (lastPrice - past) / past;
+    }
 
     /** Append the current sentiment value for the round just completed. Called from {@code TradingCycle.mutate}. */
     public static void addSentimentTick(int s) { sentimentList.add(s); }
@@ -136,7 +150,14 @@ public class Exchange {
                                 // if offerIsAsk, numAvailable was already locked when the ask was placed in createAsk()
                             }
                             offer.getGood().setPrice(offer, amountBought); //updates stock price
-                            if (amountBought == offer.getNumOffered()) {
+                            boolean fullFill = (amountBought == offer.getNumOffered());
+                            // role on each side: the offer maker is the MAKER, the counterparty is the TAKER.
+                            // offerIsAsk → ask was on the book → seller is MAKER, buyer is TAKER.
+                            // !offerIsAsk → bid was on the book → buyer is MAKER, seller is TAKER.
+                            Trade.Role buyerRole  = offerIsAsk ? Trade.Role.TAKER : Trade.Role.MAKER;
+                            Trade.Role sellerRole = offerIsAsk ? Trade.Role.MAKER : Trade.Role.TAKER;
+                            Trade.Fill fillKind   = fullFill ? Trade.Fill.FULL : Trade.Fill.PARTIAL;
+                            if (fullFill) {
                                 // Full fill: remove atomically via *Full variants that zero numOffered
                                 // inside the book lock, so no zero-quantity offer is ever visible.
                                 if (offerIsAsk) {
@@ -154,8 +175,16 @@ public class Exchange {
                             seller.setFunds(seller.getFunds() + (offer.getPrice() * amountBought)); //changes the seller's funds
                             // record the fill on both sides for the dashboard's per-agent trade table
                             float p = offer.getPrice();
-                            buyer.recordTrade(new Trade(roundNum, Trade.Side.BUY,  amountBought, p, seller.getId(), seller.getName()));
-                            seller.recordTrade(new Trade(roundNum, Trade.Side.SELL, amountBought, p, buyer.getId(),  buyer.getName()));
+                            buyer.recordTrade(new Trade(roundNum, Trade.Side.BUY,  amountBought, p, seller.getId(), seller.getName(), buyerRole,  fillKind));
+                            seller.recordTrade(new Trade(roundNum, Trade.Side.SELL, amountBought, p, buyer.getId(),  buyer.getName(),  sellerRole, fillKind));
+                            // Per-maker book-event ledger entry for the fill. fundsDelta:
+                            //   ask maker (seller side) → +p*amountBought (buyer paid them)
+                            //   bid maker (buyer side)  → 0 (cash was pre-locked at createBid time)
+                            Agent maker = offer.getOfferMaker();
+                            BookEvent.Side mside = offerIsAsk ? BookEvent.Side.ASK : BookEvent.Side.BID;
+                            BookEvent.Kind mkind = fullFill ? BookEvent.Kind.FILLED_FULL : BookEvent.Kind.FILLED_PARTIAL;
+                            float makerDelta = offerIsAsk ? (p * amountBought) : 0f;
+                            maker.getBookEvents().add(new BookEvent(roundNum, mkind, mside, p, amountBought, makerDelta, maker.getFunds()));
                         } catch (Exception e) {
                             complete = false; //trade failed
                         }
@@ -307,9 +336,7 @@ public class Exchange {
      * @param chance the agent's strategy number
      */
     private void tradeTally(int chance) {
-        if (chance == 1) {
-            aggressiveCount += 1;
-        } else if (chance == 2) {
+        if (chance == 2) {
             sentCount += 1;
         } else if (chance == 3) {
             offerCount += 1;
@@ -324,7 +351,7 @@ public class Exchange {
         } else if (chance == 8) {
             momCount += 1;
         } else if (chance == 9) {
-            momVwapCount += 1;
+            vwapMRCount += 1;
         } else {
             defaultCount += 1;
         }
@@ -348,12 +375,11 @@ public class Exchange {
         sentCount = 0;
         momCount = 0;
         vwapCount = 0;
-        momVwapCount = 0;
+        vwapMRCount = 0;
         rsiCount = 0;
         rsi10Count = 0;
         bothCount = 0;
         offerCount = 0;
-        aggressiveCount = 0;
         round = 0;
         newRound = false;
         roundFinalPrice.clear();

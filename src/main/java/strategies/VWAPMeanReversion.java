@@ -9,25 +9,19 @@ import trade.Exchange;
 import trade.TradingCycle;
 
 /**
- * Trend-following on a rolling VWAP: buys when price has moved meaningfully
- * above fair value, sells when it falls meaningfully below.
+ * Mean-reversion around the rolling VWAP: buys when price has fallen
+ * meaningfully below fair value (bargain hunting), sells when it has risen
+ * meaningfully above (profit taking).
  *
- * <p>Uses {@link Good#getRollingVwap(int)} rather than the cumulative VWAP —
- * the cumulative version barely moves after a few thousand trades and
- * becomes uselessly smooth.
+ * <p>The opposite signal-direction of {@link VWAP}. Both variants exist so
+ * the population is more diverse — they will tend to take the other side of
+ * each other's trades, which is exactly the dynamic a healthy market needs.
  *
- * <p>Sizing scales with the magnitude of the deviation, and a per-agent
- * {@code vwapPosition} counter caps stacking in one direction.
- *
- * @version 2.0
- * @since 29/04/22
  * @author github.com/samrudd1
  */
-public class VWAP extends AbstractStrategy implements Runnable {
+public class VWAPMeanReversion extends AbstractStrategy implements Runnable {
     private static final int VWAP_WINDOW = 50;
-    /** Minimum |deviation| from VWAP to act on. */
     private static final float DEV_THRESHOLD = 0.005f;
-    /** Deviation at which signal strength saturates at 1.0. */
     private static final float DEV_SATURATION = 0.05f;
     private static final int POSITION_CAP = 5;
     private static final float MAX_TRADE_FRACTION = 0.3f;
@@ -36,7 +30,7 @@ public class VWAP extends AbstractStrategy implements Runnable {
     TradingCycle tc;
     int roundNum;
 
-    public VWAP(Agent agent, TradingCycle tc, int roundNum) {
+    public VWAPMeanReversion(Agent agent, TradingCycle tc, int roundNum) {
         super(agent, tc, roundNum);
         this.agent = agent;
         this.tc = tc;
@@ -57,43 +51,46 @@ public class VWAP extends AbstractStrategy implements Runnable {
             float dev = (price - vwap) / vwap;
             Good good = Exchange.getInstance().getGoods().get(0);
 
-            if (dev >= DEV_THRESHOLD
-                    && agent.getVwapPosition() < POSITION_CAP
+            // Price below VWAP → buy the dip
+            if (dev <= -DEV_THRESHOLD
+                    && agent.getVwapMRPosition() < POSITION_CAP
                     && agent.getFunds() > price) {
-                float strength = Math.min(dev / DEV_SATURATION, 1.0f);
+                float strength = Math.min(-dev / DEV_SATURATION, 1.0f);
                 int wantToBuy = sizeBuy(agent.getFunds(), price, strength, MAX_TRADE_FRACTION);
                 if (wantToBuy > 0) {
                     boolean filled = tryTakeAsk(good, wantToBuy, price * 1.01f);
                     if (filled) {
-                        int p = agent.getVwapPosition();
-                        agent.setVwapPosition(p > 0 ? p + 1 : 1);
+                        int p = agent.getVwapMRPosition();
+                        agent.setVwapMRPosition(p > 0 ? p + 1 : 1);
                     } else if (agent.getBidsPlaced().isEmpty()) {
                         // Only post a passive limit if we don't already have one resting.
-                        // This strategy fires every tick the price stays above VWAP — without
+                        // This strategy fires every tick the price stays below VWAP — without
                         // this guard, each tick would lock another slice of cash in a NEW bid
-                        // at a slightly different price, accumulating dozens of stacked
-                        // bids that all fill near the trend peak and bake in mark-to-market
-                        // losses when price reverts toward VWAP.
+                        // at a slightly different price. Even though the mean-reversion thesis
+                        // is sound, stacking many bids while waiting for the bargain to fill
+                        // ties up most of the agent's cash and leaves it unable to act on a
+                        // genuinely better entry if one appears.
                         createBid(roundTo2(Math.min(price * 0.999f, good.getLowestAsk() - 0.01f)), good, wantToBuy);
                     }
                 }
-            } else if (dev <= -DEV_THRESHOLD
-                    && agent.getVwapPosition() > -POSITION_CAP
+            // Price above VWAP → take profit
+            } else if (dev >= DEV_THRESHOLD
+                    && agent.getVwapMRPosition() > -POSITION_CAP
                     && !agent.getGoodsOwned().isEmpty()) {
                 OwnedGood owned = agent.getGoodsOwned().get(0);
-                float strength = Math.min(-dev / DEV_SATURATION, 1.0f);
+                float strength = Math.min(dev / DEV_SATURATION, 1.0f);
                 int offering = sizeSell(owned.getNumAvailable(), strength, MAX_TRADE_FRACTION);
                 if (offering > 0) {
                     boolean filled = tryHitBid(good, offering, price * 0.99f);
                     if (filled) {
-                        int p = agent.getVwapPosition();
-                        agent.setVwapPosition(p < 0 ? p - 1 : -1);
+                        int p = agent.getVwapMRPosition();
+                        agent.setVwapMRPosition(p < 0 ? p - 1 : -1);
                     } else if (agent.getAsksPlaced().isEmpty()) {
                         // Mirror of the bid guard above: don't stack standing asks across ticks.
-                        // Without this, every tick where price stays below VWAP would lock
+                        // Without this, every tick where price stays above VWAP would lock
                         // another batch of shares in a new ask, leaving the agent with many
-                        // stacked asks that all fill near the trough and crystallise the
-                        // sell-low side of buy-high/sell-low.
+                        // stacked asks that fill on the way back down and prevent it from
+                        // re-quoting at a more attractive price.
                         createAsk(roundTo2(Math.max(price * 1.001f, good.getHighestBid() + 0.01f)), owned, offering);
                     }
                 }

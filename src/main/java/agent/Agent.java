@@ -38,6 +38,9 @@ public class Agent {
     @Getter @Setter int strategy; //what strategy plan the agent is on
     @Getter @Setter private float targetPrice; //what the agent believes is the fair value of the company
     @Setter private boolean prevPriceUp = false; //used by the VWAP and momentum class so they don't trade in the same direction consecutively
+    @Getter @Setter private int momentumPosition = 0; //signed counter of consecutive Momentum trades (+ for buys, - for sells); 0 = neutral. Used as both alternation flag and position cap.
+    @Getter @Setter private int vwapPosition = 0; //same idea for the trend-following VWAP strategy
+    @Getter @Setter private int vwapMRPosition = 0; //same idea for the mean-reversion VWAP strategy
     private boolean agentLock; //concurrency lock
     private boolean placedBid; //if the agent has placed a bid offer on the order book
     private boolean placedAsk; //if the agent has placed an ask offer on the order book
@@ -48,6 +51,7 @@ public class Agent {
     @Getter private final ArrayList<Float> fundData = new ArrayList<>(); //tracks the value of the agent's portfolio each round (driven by addValue() inside strategies — used by tests)
     @Getter private final ArrayList<Snapshot> snapshots = new ArrayList<>(); //one entry per round per agent, populated by TradingCycle.createTrades; source for dashboard charts
     @Getter private final ArrayList<Trade> tradeHistory = new ArrayList<>(); //every fill the agent took part in
+    @Getter private final ArrayList<BookEvent> bookEvents = new ArrayList<>(); //per-agent ledger of every order-book mutation this agent was the maker of
     @Getter private final ArrayList<Offer> bidsPlaced = new ArrayList<>(); //list holding all current bid offers on the book
     @Getter private final ArrayList<Offer> asksPlaced = new ArrayList<>(); //list holding all current ask offers on the book
 
@@ -125,9 +129,10 @@ public class Agent {
         }
         */
 
-        if (strategy == 1) {
-            name = "Aggressive Offers " + id;
-        } else if (strategy == 2) {
+        // AggressiveOffers (ID 1) retired — redirect to DefaultStrategy.
+        if (strategy == 1) strategy = 0;
+
+        if (strategy == 2) {
             name = "Sentiment Trend " + id;
         } else if (strategy == 3) {
             name = "Offer Only " + id;
@@ -142,7 +147,7 @@ public class Agent {
         } else if (strategy == 8) {
             name = "Momentum " + id;
         } else if (strategy == 9) {
-            name = "VWAP and Momentum " + id;
+            name = "VWAP Mean Reversion " + id;
         } else {
             name = "Default " + id;
         }
@@ -203,7 +208,7 @@ public class Agent {
     public void createTargetPrice() {
         Random rand = RandomProvider.get();
         int chance = rand.nextInt(10);
-        if ((strategy == 1) || (strategy == 3) || (strategy == 9)) {
+        if ((strategy == 3) || (strategy == 9)) {
             //vwap and momentum don't want to buy at start
             targetPrice = (float) (((float) Math.round((chance + 80) * Good.getPrice())) * 0.01);
         } else {
@@ -249,27 +254,43 @@ public class Agent {
     public boolean getPrevPriceUp() { return prevPriceUp; }
 
     /**
-     * bid has been removed from the order book, so the funds are given back to the agent
+     * bid has been removed from the order book, so the funds are given back to the agent.
+     * Called from {@link good.Good#removeBid} (cancellation) and
+     * {@link good.Good#removeBidFull} (full fill — numOffered already zeroed).
+     * Only the cancellation case is logged here; full-fill events are logged by
+     * {@link trade.Exchange#execute} where {@code amountBought} is known.
      * @param offer the offer that was removed
      */
     public void removedBid(Offer offer) {
-        funds = (funds + (offer.getNumOffered() * offer.getPrice()));
+        int qty = offer.getNumOffered();
+        float refund = qty * offer.getPrice();
+        funds = (funds + refund);
         placedBid = false;
         changeTargetPrice();
+        if (qty > 0) {
+            bookEvents.add(new BookEvent(Exchange.getRound(), BookEvent.Kind.CANCELLED,
+                    BookEvent.Side.BID, offer.getPrice(), qty, refund, funds));
+        }
     }
 
     /**
-     * ask has been removed from the order book, the shares are returned to the agent
+     * ask has been removed from the order book, the shares are returned to the agent.
+     * See {@link #removedBid} for the symmetric notes on full-fill vs cancellation logging.
      * @param offer the ask offer that was removed
      */
     public void removeAsk(Offer offer) {
+        int qty = offer.getNumOffered();
         for (OwnedGood good: goodsOwned) {
             if (offer.getGood().getId() == good.getGood().getId()) {
-                good.setNumAvailable(good.getNumAvailable() + offer.getNumOffered());
+                good.setNumAvailable(good.getNumAvailable() + qty);
             }
         }
         placedAsk = false;
         changeTargetPrice();
+        if (qty > 0) {
+            bookEvents.add(new BookEvent(Exchange.getRound(), BookEvent.Kind.CANCELLED,
+                    BookEvent.Side.ASK, offer.getPrice(), qty, 0f, funds));
+        }
     }
 
     /**

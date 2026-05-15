@@ -1,9 +1,11 @@
 package strategies;
 
 import agent.Agent;
+import agent.BookEvent;
 import agent.OwnedGood;
 import good.Good;
 import good.Offer;
+import trade.Exchange;
 import trade.TradingCycle;
 
 import java.util.ArrayList;
@@ -45,9 +47,12 @@ public abstract class AbstractStrategy {
             // addBid can silently drop offers when the ask side is empty and bids exist;
             // deducting funds for a dropped offer would permanently lose that money.
             if (good.addBid(newBid)) {
-                agent.setFunds((agent.getFunds() - (price * numOffered))); //takes money from agent to cover the bid
+                float lock = price * numOffered;
+                agent.setFunds((agent.getFunds() - lock)); //takes money from agent to cover the bid
                 agent.getBidsPlaced().add(newBid); //adds bid to list so agent can access it later
                 agent.setPlacedBid(true); //stops agents placing lots of bids consecutively
+                agent.getBookEvents().add(new BookEvent(Exchange.getRound(), BookEvent.Kind.PLACED,
+                        BookEvent.Side.BID, price, numOffered, -lock, agent.getFunds()));
             }
         }
     }
@@ -69,8 +74,35 @@ public abstract class AbstractStrategy {
                 good.setNumAvailable((good.getNumAvailable() - numOffered)); //makes shares unavailable
                 agent.getAsksPlaced().add(newAsk); //adds offer to list so agent can access it later
                 agent.setPlacedAsk(true); //stops agents placing lots of asks consecutively
+                agent.getBookEvents().add(new BookEvent(Exchange.getRound(), BookEvent.Kind.PLACED,
+                        BookEvent.Side.ASK, price, numOffered, 0f, agent.getFunds()));
             }
         }
+    }
+
+    /**
+     * Position-sizing helper for buys. Returns shares to buy = floor(funds * clamp(strength) * maxFraction / price).
+     * @param funds free cash available to deploy
+     * @param price reference price (use the offer price you're about to hit, or current market price)
+     * @param signalStrength conviction in [0,1]; values outside the range are clamped
+     * @param maxFraction hard ceiling on the fraction of free cash this single trade may consume
+     */
+    protected int sizeBuy(float funds, float price, float signalStrength, float maxFraction) {
+        if (price <= 0f || funds <= 0f) return 0;
+        float s = Math.max(0f, Math.min(1f, signalStrength));
+        return (int) Math.floor((funds * s * maxFraction) / price);
+    }
+
+    /**
+     * Position-sizing helper for sells. Returns shares to sell = floor(available * clamp(strength) * maxFraction).
+     * @param available shares not already locked in standing asks
+     * @param signalStrength conviction in [0,1]; values outside the range are clamped
+     * @param maxFraction hard ceiling on the fraction of the available position this single trade may liquidate
+     */
+    protected int sizeSell(int available, float signalStrength, float maxFraction) {
+        if (available <= 0) return 0;
+        float s = Math.max(0f, Math.min(1f, signalStrength));
+        return (int) Math.floor(available * s * maxFraction);
     }
 
     /**

@@ -2,6 +2,7 @@ package support;
 
 import agent.Agent;
 import good.Good;
+import good.Offer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import session.Session;
@@ -27,6 +28,7 @@ public abstract class GlobalStateFixture {
         Agent.resetForTest();
         Exchange.resetForTest();
         TradingCycle.resetForTest();
+        Offer.resetForTest();
     }
 
     @AfterEach

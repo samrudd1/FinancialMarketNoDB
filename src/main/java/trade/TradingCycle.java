@@ -138,9 +138,7 @@ public class TradingCycle {
         List<Future<?>> futures = new ArrayList<>();
         for (Agent agent : Session.getAgents().values()) {
             if (agent.getId() != 1) {
-                if (agent.getStrategy() == 1) {
-                    futures.add(pool.submit(new AggressiveOffers(agent, this, roundNum)));
-                } else if (agent.getStrategy() == 2) {
+                if (agent.getStrategy() == 2) {
                     if (roundNum > 10) {
                         futures.add(pool.submit(new SentimentTrend(agent, this, roundNum)));
                     }
@@ -172,12 +170,9 @@ public class TradingCycle {
                         futures.add(pool.submit(new Momentum(agent, this, roundNum)));
                     }
                 } else if (agent.getStrategy() == 9) {
-                    final Agent a9 = agent;
-                    final int rn9 = roundNum;
-                    futures.add(pool.submit(() -> {
-                        if (rn9 > 100) new Momentum(a9, this, rn9).run();
-                        if (rn9 < 2000) new VWAP(a9, this, rn9).run();
-                    }));
+                    if (roundNum < 2000) {
+                        futures.add(pool.submit(new VWAPMeanReversion(agent, this, roundNum)));
+                    }
                 } else {
                     futures.add(pool.submit(new DefaultStrategy(agent, this, roundNum)));
                 }
@@ -269,7 +264,6 @@ public class TradingCycle {
     private void analyseStrategies() {
         analysis("default", 0, Exchange.getDefaultCount());
         analysis("offer only", 3, Exchange.getOfferCount());
-        analysis("aggressive offers", 1, Exchange.getAggressiveCount());
         analysis("sentiment", 2, Exchange.getSentCount());
         analysis("RSI", 4, Exchange.getRsiCount());
         analysis("RSI 10", 5, Exchange.getRsi10Count());
@@ -278,7 +272,7 @@ public class TradingCycle {
         if (Agent.isVolatility()) { //these methods are only used when the user doesn't remove them when asked in RunMarket
             analysis("momentum", 8, Exchange.getMomCount());
             analysis("VWAP", 7, Exchange.getVwapCount());
-            analysis("momentum and VWAP", 9, Exchange.getMomVwapCount());
+            analysis("VWAP mean reversion", 9, Exchange.getVwapMRCount());
         }
         System.out.println();
     }

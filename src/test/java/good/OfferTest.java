@@ -64,14 +64,26 @@ class OfferTest {
     }
 
     @Test
-    void compareToEqualPriceIsZero() {
-        assertThat(offer(15.0f, 1).compareTo(offer(15.0f, 1))).isZero();
+    void compareToEqualPriceFallsBackToIdTiebreaker() {
+        // Same price → tiebreak on Offer.id (older first). The earlier-created
+        // offer must compare strictly less than the later one. The id
+        // tiebreaker is load-bearing for the order book — see Offer.compareTo.
+        Offer earlier = offer(15.0f, 1);
+        Offer later   = offer(15.0f, 1);
+        assertThat(earlier.compareTo(later)).isNegative();
+        assertThat(later.compareTo(earlier)).isPositive();
+        assertThat(earlier.compareTo(earlier)).isZero();
     }
 
     @Test
     void compareToQuantityHasNoEffectOnOrdering() {
-        // quantity is not part of the price comparison
-        assertThat(offer(50.0f, 1).compareTo(offer(50.0f, 9999))).isZero();
+        // Quantity is not part of the comparison. With same price, the result
+        // is driven by Offer.id, so we just check that swapping quantities
+        // doesn't change the sign of the comparison.
+        Offer first  = offer(50.0f, 1);
+        Offer second = offer(50.0f, 9999);
+        assertThat(Integer.signum(first.compareTo(second))).isEqualTo(-1);
+        assertThat(Integer.signum(second.compareTo(first))).isEqualTo(+1);
     }
 
     @Test

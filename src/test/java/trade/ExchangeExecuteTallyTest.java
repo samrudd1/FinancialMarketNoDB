@@ -107,17 +107,10 @@ class ExchangeExecuteTallyTest extends GlobalStateFixture {
     }
 
     @Test
-    void aggressiveTallyIncrementedForBoth() throws InterruptedException {
-        float before = Exchange.getAggressiveCount();
-        executeTrade(1, 1);
-        assertThat(Exchange.getAggressiveCount()).isEqualTo(before + 2f);
-    }
-
-    @Test
-    void momVwapTallyIncrementedOnce() throws InterruptedException {
-        float before = Exchange.getMomVwapCount();
+    void vwapMRTallyIncrementedOnce() throws InterruptedException {
+        float before = Exchange.getVwapMRCount();
         executeTrade(9, 0);
-        assertThat(Exchange.getMomVwapCount()).isEqualTo(before + 1f);
+        assertThat(Exchange.getVwapMRCount()).isEqualTo(before + 1f);
     }
 
     @Test

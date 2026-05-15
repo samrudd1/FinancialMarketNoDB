@@ -1,6 +1,7 @@
 package dashboard;
 
 import agent.Agent;
+import agent.BookEvent;
 import agent.Snapshot;
 import agent.Trade;
 import javafx.beans.property.ReadOnlyObjectWrapper;
@@ -107,6 +108,8 @@ final class AgentsTab {
 
         // ----- Trade history table -----
         TableView<Trade> tradeTable = buildTradeTable();
+        // ----- Order-book event ledger (every PLACED / FILLED / CANCELLED event for the agent) -----
+        TableView<BookEvent> bookTable = buildBookEventTable();
 
         Label summary = new Label("Pick an agent on the left to see their portfolio history.");
         summary.setFont(Font.font("SansSerif", 12));
@@ -116,7 +119,15 @@ final class AgentsTab {
         BorderPane chartsPane = new BorderPane(charts);
         chartsPane.setBottom(summary);
 
-        SplitPane rightSplit = new SplitPane(chartsPane, tradeTable);
+        // Bottom panel: trades on the left, book events on the right.
+        // Book events are the ground-truth ledger for cash movement and answer
+        // "where did this agent's money actually go" when the trade table alone
+        // doesn't add up to the portfolio chart.
+        SplitPane bottomTables = new SplitPane(tradeTable, bookTable);
+        bottomTables.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
+        bottomTables.setDividerPositions(0.5);
+
+        SplitPane rightSplit = new SplitPane(chartsPane, bottomTables);
         rightSplit.setOrientation(javafx.geometry.Orientation.VERTICAL);
         rightSplit.setDividerPositions(0.72);
 
@@ -124,6 +135,7 @@ final class AgentsTab {
         list.getSelectionModel().selectedItemProperty().addListener((obs, old, agent) -> {
             if (agent == null) return;
             populate(agent, topPlot, portfolioSeries, priceSeries, bottomPlot, tradeTable);
+            bookTable.setItems(FXCollections.observableArrayList(agent.getBookEvents()));
             String title = agent.getName() + "  (id " + agent.getId() + ", strategy " + agent.getStrategy() + ")";
             topChart.setTitle(title);
             summary.setText(buildSummary(agent));
@@ -207,6 +219,14 @@ final class AgentsTab {
         sideCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().side().name()));
         sideCol.setPrefWidth(60);
 
+        TableColumn<Trade, String> roleCol = new TableColumn<>("Role");
+        roleCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().role().name()));
+        roleCol.setPrefWidth(70);
+
+        TableColumn<Trade, String> fillCol = new TableColumn<>("Fill");
+        fillCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().fill().name()));
+        fillCol.setPrefWidth(80);
+
         TableColumn<Trade, Number> amountCol = new TableColumn<>("Amount");
         amountCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().amount()));
         amountCol.setPrefWidth(80);
@@ -225,7 +245,47 @@ final class AgentsTab {
         counterCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().counterpartyName()));
         counterCol.setPrefWidth(220);
 
-        table.getColumns().addAll(roundCol, sideCol, amountCol, priceCol, totalCol, counterCol);
+        table.getColumns().addAll(roundCol, sideCol, roleCol, fillCol, amountCol, priceCol, totalCol, counterCol);
+        return table;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static TableView<BookEvent> buildBookEventTable() {
+        TableView<BookEvent> table = new TableView<>();
+        table.setPlaceholder(new Label("No book events."));
+
+        TableColumn<BookEvent, Number> roundCol = new TableColumn<>("Round");
+        roundCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().round()));
+        roundCol.setPrefWidth(60);
+
+        TableColumn<BookEvent, String> kindCol = new TableColumn<>("Event");
+        kindCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().kind().name()));
+        kindCol.setPrefWidth(110);
+
+        TableColumn<BookEvent, String> sideCol = new TableColumn<>("Side");
+        sideCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().side().name()));
+        sideCol.setPrefWidth(50);
+
+        TableColumn<BookEvent, String> priceCol = new TableColumn<>("Price (£)");
+        priceCol.setCellValueFactory(c ->
+                new ReadOnlyObjectWrapper<>(String.format("%,.2f", c.getValue().price())));
+        priceCol.setPrefWidth(80);
+
+        TableColumn<BookEvent, Number> qtyCol = new TableColumn<>("Qty");
+        qtyCol.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().qty()));
+        qtyCol.setPrefWidth(70);
+
+        TableColumn<BookEvent, String> deltaCol = new TableColumn<>("Δ Funds (£)");
+        deltaCol.setCellValueFactory(c ->
+                new ReadOnlyObjectWrapper<>(String.format("%+,.2f", c.getValue().fundsDelta())));
+        deltaCol.setPrefWidth(110);
+
+        TableColumn<BookEvent, String> afterCol = new TableColumn<>("Funds after (£)");
+        afterCol.setCellValueFactory(c ->
+                new ReadOnlyObjectWrapper<>(String.format("%,.2f", c.getValue().fundsAfter())));
+        afterCol.setPrefWidth(120);
+
+        table.getColumns().addAll(roundCol, kindCol, sideCol, priceCol, qtyCol, deltaCol, afterCol);
         return table;
     }
 
