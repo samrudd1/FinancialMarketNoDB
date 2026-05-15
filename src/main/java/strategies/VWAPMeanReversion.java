@@ -3,7 +3,6 @@ package strategies;
 import agent.Agent;
 import agent.OwnedGood;
 import good.Good;
-import good.Offer;
 import lombok.SneakyThrows;
 import trade.Exchange;
 import trade.TradingCycle;
@@ -49,17 +48,35 @@ public class VWAPMeanReversion extends AbstractStrategy implements Runnable {
             float vwap = Good.getRollingVwap(VWAP_WINDOW);
             if (vwap <= 0f) vwap = price;
             float dev = (price - vwap) / vwap;
+
+            // Volatility-aware trigger and sizing. sigmaFrac is the rolling stddev of trade
+            // prices expressed as a fraction of VWAP — i.e. one "z" worth of deviation.
+            //   trigger:    |z| >= 1   (only act once price is at least one stddev from VWAP)
+            //   saturation: |z| >= 2   (full-size trade at two stddevs out)
+            // In quiet markets a small absolute deviation is meaningful; in noisy markets the
+            // same absolute deviation is just noise and shouldn't move the strategy. Falls back
+            // to the legacy 0.5% trigger / 5% saturation when there isn't enough trade history
+            // for a non-zero stddev (e.g. the first few rounds of a fresh simulation).
+            float stddev = Good.getRollingPriceStddev(VWAP_WINDOW);
+            float sigmaFrac = (stddev > 0f && vwap > 0f) ? stddev / vwap : 0f;
+            boolean haveSigma = sigmaFrac > 0f;
+            float triggerThreshold = haveSigma ? sigmaFrac : DEV_THRESHOLD;
+            float saturation       = haveSigma ? 2f * sigmaFrac : DEV_SATURATION;
+
             Good good = Exchange.getInstance().getGoods().get(0);
 
             // Price below VWAP → buy the dip
-            if (dev <= -DEV_THRESHOLD
+            if (dev <= -triggerThreshold
                     && agent.getVwapMRPosition() < POSITION_CAP
                     && agent.getFunds() > price) {
-                float strength = Math.min(-dev / DEV_SATURATION, 1.0f);
+                float strength = Math.min(-dev / saturation, 1.0f);
                 int wantToBuy = sizeBuy(agent.getFunds(), price, strength, MAX_TRADE_FRACTION);
                 if (wantToBuy > 0) {
-                    boolean filled = tryTakeAsk(good, wantToBuy, price * 1.01f);
-                    if (filled) {
+                    // Cap the sweep at the rolling VWAP — the mean-reversion thesis is that
+                    // price will revert *to* fair value, so paying more than that defeats the
+                    // strategy. The Exchange ±5%/-4% price band remains the ultimate ceiling.
+                    int filledQty = sweepBuy(good, vwap, wantToBuy);
+                    if (filledQty > 0) {
                         int p = agent.getVwapMRPosition();
                         agent.setVwapMRPosition(p > 0 ? p + 1 : 1);
                     } else if (agent.getBidsPlaced().isEmpty()) {
@@ -74,15 +91,16 @@ public class VWAPMeanReversion extends AbstractStrategy implements Runnable {
                     }
                 }
             // Price above VWAP → take profit
-            } else if (dev >= DEV_THRESHOLD
+            } else if (dev >= triggerThreshold
                     && agent.getVwapMRPosition() > -POSITION_CAP
                     && !agent.getGoodsOwned().isEmpty()) {
                 OwnedGood owned = agent.getGoodsOwned().get(0);
-                float strength = Math.min(dev / DEV_SATURATION, 1.0f);
+                float strength = Math.min(dev / saturation, 1.0f);
                 int offering = sizeSell(owned.getNumAvailable(), strength, MAX_TRADE_FRACTION);
                 if (offering > 0) {
-                    boolean filled = tryHitBid(good, offering, price * 0.99f);
-                    if (filled) {
+                    // Mirror cap: don't sell *below* VWAP when reverting from above.
+                    int filledQty = sweepSell(good, vwap, offering);
+                    if (filledQty > 0) {
                         int p = agent.getVwapMRPosition();
                         agent.setVwapMRPosition(p < 0 ? p - 1 : -1);
                     } else if (agent.getAsksPlaced().isEmpty()) {
@@ -101,26 +119,6 @@ public class VWAPMeanReversion extends AbstractStrategy implements Runnable {
             agent.setAgentLock(false);
             notify();
         }
-    }
-
-    private boolean tryTakeAsk(Good good, int wantToBuy, float maxPrice) throws InterruptedException {
-        Offer offer = good.getLowestAskOffer();
-        if (offer == null) return false;
-        if (offer.getPrice() > maxPrice) return false;
-        if (agent.getId() == offer.getOfferMaker().getId()) return false;
-        int amt = Math.min(wantToBuy, offer.getNumOffered());
-        if (amt <= 0) return false;
-        return Exchange.getInstance().execute(agent, offer.getOfferMaker(), offer, amt, tc, roundNum);
-    }
-
-    private boolean tryHitBid(Good good, int offering, float minPrice) throws InterruptedException {
-        Offer offer = good.getHighestBidOffer();
-        if (offer == null) return false;
-        if (offer.getPrice() < minPrice) return false;
-        if (agent.getId() == offer.getOfferMaker().getId()) return false;
-        int amt = Math.min(offering, offer.getNumOffered());
-        if (amt <= 0) return false;
-        return Exchange.getInstance().execute(offer.getOfferMaker(), agent, offer, amt, tc, roundNum);
     }
 
     private static float roundTo2(float v) {

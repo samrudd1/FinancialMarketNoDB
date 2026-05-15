@@ -2,7 +2,6 @@ package strategies;
 
 import agent.Agent;
 import good.Good;
-import good.Offer;
 import lombok.SneakyThrows;
 import trade.Exchange;
 import trade.TradingCycle;
@@ -77,54 +76,28 @@ public class DefaultStrategy extends AbstractStrategy implements Runnable {
             }
         }
 
+        Good good = Exchange.getInstance().getGoods().get(0);
+
         if (!agent.getGoodsOwned().isEmpty()) {
             if ((agent.getTargetPrice() < highestBid) && (highestBid != 0)) {
-                Offer offer = Exchange.getInstance().getGoods().get(0).getHighestBidOffer(); //gets offer of the highest bid
-                if (offer != null) {
-                    if (!(offer.getOfferMaker().getName().equalsIgnoreCase(agent.getName()))) { //ensures agent is not the buyer
-                        int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable() * 0.25); //finds how many shares to sell
-                        if (offer.getNumOffered() < offering) {
-                            offering = offer.getNumOffered();
-                        }
-                        if (offer.getPrice() > (price * 0.98)) {
-                            if ((offering > 0) && (agent.getId() != offer.getOfferMaker().getId())) {
-                                //sells to the highest bid if the offer is close to the last traded price
-                                boolean success = Exchange.getInstance().execute(offer.getOfferMaker(), agent, offer, offering, tc, roundNum);
-                                if (!success) {
-                                    System.out.println("trade execution failed");
-                                }
-                            }
-                        }
-                    }
-                }
+                int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable() * 0.25); //finds how many shares to sell
+                // Sweep down the bid book stopping at the agent's target — every bid above target
+                // is acceptable to this agent regardless of how it compares to current market.
+                sweepSell(good, agent.getTargetPrice(), offering);
             }
         }
 
         if (agent.getFunds() > price) {
             if ((lowestAsk != 99999) && (lowestAsk < agent.getTargetPrice())) {
-                Offer offer = Exchange.getInstance().getGoods().get(0).getLowestAskOffer(); //gets offer of the lowest ask
-                if (offer != null) {
-                    if (!(offer.getOfferMaker().getName().equals(agent.getName()))) { //ensures agent is not the seller
-                        int wantToBuy = (int) Math.floor(((agent.getFunds() / offer.getPrice()) * 0.25)); //finds how many shares to buy
-                        if (offer.getNumOffered() < wantToBuy) {
-                            wantToBuy = offer.getNumOffered();
-                        }
-                        if (offer.getPrice() < (price * 1.03)) {
-                            if ((wantToBuy > 0) && (agent.getId() != offer.getOfferMaker().getId())) {
-                                //buys from the lowest ask if the offer is close to the last traded price
-                                boolean success = Exchange.getInstance().execute(agent, offer.getOfferMaker(), offer, wantToBuy, tc, roundNum);
-                                if (!success) {
-                                    System.out.println("trade execution failed");
-                                }
-                            }
-                        }
-                    }
-                }
+                int wantToBuy = (int) Math.floor(((agent.getFunds() / price) * 0.25)); //finds how many shares to buy
+                // Sweep up the ask book stopping at the agent's target — every ask below target
+                // is a buy this agent is happy to take.
+                sweepBuy(good, agent.getTargetPrice(), wantToBuy);
             }
         }
 
         //if the agent's target price is far from the current price, then it is moved closer so it can trade again
-        if ((agent.getTargetPrice() > (price * 2)) || (agent.getTargetPrice() < (price * 0.5))) {
+        if ((agent.getTargetPrice() > (price * 1.33)) || (agent.getTargetPrice() < (price * 0.75))) {
             agent.setTargetPrice(price);
             agent.changeTargetPrice();
         }

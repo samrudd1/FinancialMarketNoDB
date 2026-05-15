@@ -107,6 +107,40 @@ class DefaultStrategyTest extends GlobalStateFixture {
         assertThat(buyer.getGoodsOwned().get(0).getNumOwned()).isGreaterThan(0);
     }
 
+    // ── execution: sweeps multiple ask levels up to target price ────────────
+
+    @Test
+    void buyerSweepsMultipleAskLevelsUpToTargetPrice() throws InterruptedException {
+        // Seed bid so subsequent addAsk calls aren't rejected by the one-sided-book guard.
+        Agent stubBidder = new Agent();
+        stubBidder.setFunds(base * 100f);
+        good.addBid(new Offer(base * 0.5f, stubBidder, good, 1));
+
+        Agent seller = new Agent();
+        OwnedGood sellerOwned = new OwnedGood(seller, good, 500, 500, base, true);
+        seller.getGoodsOwned().add(0, sellerOwned);
+        Offer a1 = new Offer(base,         seller, good, 5);
+        Offer a2 = new Offer(base * 1.02f, seller, good, 5);
+        Offer a3 = new Offer(base * 1.04f, seller, good, 5);
+        good.addAsk(a1); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 5);
+        good.addAsk(a2); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 5);
+        good.addAsk(a3); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 5);
+        seller.setPlacedAsk(true);
+
+        Agent buyer = new Agent();
+        buyer.setFunds(base * 10000f);
+        // Generous target → cap is base*20, sweep should drain all three levels
+        // (each level still inside Exchange's ±5%/-4% band so execute won't reject).
+        buyer.setTargetPrice(base * 20f);
+
+        new DefaultStrategy(buyer, tc, 1).run();
+
+        assertThat(buyer.getGoodsOwned()).isNotEmpty();
+        assertThat(buyer.getGoodsOwned().get(0).getNumOwned())
+                .as("default-strategy sweep should drain past the top-of-book ask")
+                .isGreaterThan(5);
+    }
+
     // ── execution: seller hits highest bid ────────────────────────────────────
 
     @Test

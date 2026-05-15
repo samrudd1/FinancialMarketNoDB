@@ -106,6 +106,66 @@ public abstract class AbstractStrategy {
     }
 
     /**
+     * Limit-style buy sweep. Walks the ask side of {@code good} from the lowest price upward,
+     * routing each level through {@link Exchange#execute} until {@code desiredQty} is filled,
+     * the next offer's price exceeds {@code maxPrice}, the book runs out, funds are exhausted,
+     * or the exchange rejects (price-band, self-match, etc.). Returns the total quantity filled.
+     *
+     * <p>Callers must already hold their {@code agentLock}, the same way the existing single-shot
+     * {@code Exchange.execute} callers do — the sweep is just that pattern in a loop.
+     *
+     * <p>Trade detection uses the offer's {@code numOffered} delta, not Exchange.execute's
+     * return value — the latter returns {@code true} (its initial {@code complete} value) even
+     * when the price-band check silently rejects, which would otherwise loop the sweep forever.
+     */
+    protected int sweepBuy(Good good, float maxPrice, int desiredQty) throws InterruptedException {
+        if (desiredQty <= 0) return 0;
+        int filled = 0;
+        while (filled < desiredQty) {
+            Offer top = good.getLowestAskOffer();
+            if (top == null) break;
+            if (top.getPrice() > maxPrice) break;
+            if (agent.getId() == top.getOfferMaker().getId()) break;
+            int affordable = (int) Math.floor(agent.getFunds() / top.getPrice());
+            int qty = Math.min(desiredQty - filled, Math.min(top.getNumOffered(), affordable));
+            if (qty <= 0) break;
+            int qtyBefore = top.getNumOffered();
+            Exchange.getInstance().execute(agent, top.getOfferMaker(), top, qty, tc, roundNum);
+            int traded = qtyBefore - top.getNumOffered();
+            if (traded <= 0) break; // band rejection, self-match, or exception — stop sweeping
+            filled += traded;
+        }
+        return filled;
+    }
+
+    /**
+     * Limit-style sell sweep. Walks the bid side of {@code good} from the highest price downward,
+     * routing each level through {@link Exchange#execute} until {@code desiredQty} is filled,
+     * the next bid's price falls below {@code minPrice}, the book runs out, the agent's available
+     * shares are exhausted, or the exchange rejects. Returns the total quantity filled.
+     */
+    protected int sweepSell(Good good, float minPrice, int desiredQty) throws InterruptedException {
+        if (desiredQty <= 0) return 0;
+        if (agent.getGoodsOwned().isEmpty()) return 0;
+        OwnedGood owned = agent.getGoodsOwned().get(0);
+        int filled = 0;
+        while (filled < desiredQty) {
+            Offer top = good.getHighestBidOffer();
+            if (top == null) break;
+            if (top.getPrice() < minPrice) break;
+            if (agent.getId() == top.getOfferMaker().getId()) break;
+            int qty = Math.min(desiredQty - filled, Math.min(top.getNumOffered(), owned.getNumAvailable()));
+            if (qty <= 0) break;
+            int qtyBefore = top.getNumOffered();
+            Exchange.getInstance().execute(top.getOfferMaker(), agent, top, qty, tc, roundNum);
+            int traded = qtyBefore - top.getNumOffered();
+            if (traded <= 0) break;
+            filled += traded;
+        }
+        return filled;
+    }
+
+    /**
      * used by agents to remove their offers that are far from the current price
      * this allows them to place another offer at a more competitive price
      * @param agent agent to check offers for

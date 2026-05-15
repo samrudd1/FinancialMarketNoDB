@@ -62,6 +62,83 @@ class RSI10Test extends GlobalStateFixture {
         assertThat(buyer.getGoodsOwned().get(0).getNumOwned()).isGreaterThan(0);
     }
 
+    // ── sweeps multiple ask levels in a single oversold round ───────────────
+
+    @Test
+    void sweepsMultipleAskLevelsWhenOversold() throws InterruptedException {
+        Agent stubBidder = new Agent();
+        stubBidder.setFunds(base * 100f);
+        Offer stub = new Offer(base * 0.5f, stubBidder, good, 1);
+        good.addBid(stub);
+
+        Agent seller = new Agent();
+        OwnedGood sellerOwned = new OwnedGood(seller, good, 500, 500, base, true);
+        seller.getGoodsOwned().add(0, sellerOwned);
+        Offer a1 = new Offer(base * 1.00f, seller, good, 3);
+        Offer a2 = new Offer(base * 1.01f, seller, good, 3);
+        Offer a3 = new Offer(base * 1.02f, seller, good, 3);
+        good.addAsk(a1); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 3);
+        good.addAsk(a2); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 3);
+        good.addAsk(a3); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 3);
+
+        Agent buyer = new Agent();
+        buyer.setFunds(base * 5000f);
+
+        new RSI10(buyer, tc, 161).run();
+
+        assertThat(buyer.getGoodsOwned()).as("RSI10 must buy when oversold").isNotEmpty();
+        assertThat(buyer.getGoodsOwned().get(0).getNumOwned())
+                .as("RSI10 sweep should drain more than just the top-of-book ask")
+                .isGreaterThan(3);
+    }
+
+    // ── boundary cap stops sweep tighter than the 3% safety ─────────────────
+
+    @Test
+    void sweepCapTightensWhenRsi10BoundaryIsBelowSafetyCeiling() throws InterruptedException {
+        // RSI10 uses 14 diffs at stride 10 (looks back 140 rounds, needs rfp.size() >= 141).
+        // History: 140 entries at base, then one 2% drop. The stride-10 diff at i=140 is -0.02
+        // (rfp[140]/rfp[130]), all others are 0, and the dropping diff at i=10 is 0. With
+        // targetRatio = 30/70 ≈ 0.4286, newDiff = 0.4286 * 0.02 ≈ 0.00857, so the boundary
+        // sits at rfp[131] * 1.00857 ≈ base * 1.00857 — well below the 3% safety ceiling.
+        ArrayList<Float> rfp = Exchange.getRoundFinalPrice();
+        for (int i = 0; i < 140; i++) rfp.add(base);
+        rfp.add(base * 0.98f);
+
+        Agent dummy = new Agent();
+        good.setPrice(new Offer(base * 0.98f, dummy, good, 1), 1);
+        Exchange.lastPrice = base * 0.98f;
+        Exchange.getInstance().setPriceCheck(base * 0.98f);
+
+        // Seed bid side so subsequent addAsk calls aren't rejected by the one-sided guard.
+        Agent stubBidder = new Agent();
+        stubBidder.setFunds(base * 100f);
+        good.addBid(new Offer(base * 0.5f, stubBidder, good, 1));
+
+        Agent seller = new Agent();
+        OwnedGood sellerOwned = new OwnedGood(seller, good, 500, 500, base, true);
+        seller.getGoodsOwned().add(0, sellerOwned);
+        // Two asks below the ~1.00857*base boundary, two above (but still within 3% safety).
+        Offer a1 = new Offer(base * 0.990f, seller, good, 5); // below boundary
+        Offer a2 = new Offer(base * 1.005f, seller, good, 5); // below boundary
+        Offer a3 = new Offer(base * 1.010f, seller, good, 5); // above boundary, below 3% safety
+        Offer a4 = new Offer(base * 1.020f, seller, good, 5); // well above boundary
+        good.addAsk(a1); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 5);
+        good.addAsk(a2); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 5);
+        good.addAsk(a3); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 5);
+        good.addAsk(a4); sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - 5);
+
+        Agent buyer = new Agent();
+        buyer.setFunds(base * 5000f);
+
+        new RSI10(buyer, tc, 161).run();
+
+        assertThat(buyer.getGoodsOwned()).isNotEmpty();
+        assertThat(buyer.getGoodsOwned().get(0).getNumOwned())
+                .as("RSI10 boundary cap should stop the sweep short of the +1%/+2% asks")
+                .isEqualTo(10);
+    }
+
     // ── no action when rsiP is NaN ────────────────────────────────────────────
 
     @Test

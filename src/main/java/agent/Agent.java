@@ -129,8 +129,8 @@ public class Agent {
         }
         */
 
-        // AggressiveOffers (ID 1) retired — redirect to DefaultStrategy.
-        if (strategy == 1) strategy = 0;
+        // AggressiveOffers (ID 1) retired — redirect to Offers Only.
+        if (strategy == 1) strategy = 3;
 
         if (strategy == 2) {
             name = "Sentiment Trend " + id;

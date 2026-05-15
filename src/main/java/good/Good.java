@@ -420,6 +420,31 @@ public class Good {
     }
 
     /**
+     * Sample standard deviation of trade prices across the most recent {@code window}
+     * trades. Pairs with {@link #getRollingVwap(int)} for volatility-aware sizing
+     * (z-score / Bollinger-style strategies). Returns 0 when there are fewer than
+     * two trades in the window, so callers can detect "insufficient data" and fall
+     * back to a fixed scaler. Unweighted — each trade contributes one sample
+     * regardless of size.
+     */
+    public static float getRollingPriceStddev(int window) {
+        int size = tradeData.size();
+        if (size < 2) return 0f;
+        int from = Math.max(0, size - window);
+        int n = size - from;
+        if (n < 2) return 0f;
+        double sum = 0;
+        for (int i = from; i < size; i++) sum += tradeData.get(i).getPrice();
+        double mean = sum / n;
+        double sumSq = 0;
+        for (int i = from; i < size; i++) {
+            double d = tradeData.get(i).getPrice() - mean;
+            sumSq += d * d;
+        }
+        return (float) Math.sqrt(sumSq / (n - 1));
+    }
+
+    /**
      * creates the starting price for the stock to be offered
      */
     private void createPrice(){
