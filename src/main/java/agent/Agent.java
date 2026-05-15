@@ -8,6 +8,7 @@ import lombok.ToString;
 import session.Session;
 import trade.Exchange;
 import trade.TradingCycle;
+import utilities.RandomProvider;
 
 import java.util.ArrayList;
 import java.util.Random;
@@ -44,20 +45,27 @@ public class Agent {
     private final int MAX_STARTING_FUNDS = 8001000; //maximum possible starting funds
     private final ArrayList<OwnedGood> goodsOwned = new ArrayList<>(); //list to hold for owned shares
     @Getter private final ArrayList<String> namesOwned = new ArrayList<>(); //name of shares owned
-    @Getter private final ArrayList<Float> fundData = new ArrayList<>(); //tracks the value of the agent's portfolio each round
+    @Getter private final ArrayList<Float> fundData = new ArrayList<>(); //tracks the value of the agent's portfolio each round (driven by addValue() inside strategies — used by tests)
+    @Getter private final ArrayList<Snapshot> snapshots = new ArrayList<>(); //one entry per round per agent, populated by TradingCycle.createTrades; source for dashboard charts
+    @Getter private final ArrayList<Trade> tradeHistory = new ArrayList<>(); //every fill the agent took part in
     @Getter private final ArrayList<Offer> bidsPlaced = new ArrayList<>(); //list holding all current bid offers on the book
     @Getter private final ArrayList<Offer> asksPlaced = new ArrayList<>(); //list holding all current ask offers on the book
 
     /**
      * Constructor used for making all new agents
      */
-    public Agent(){
+    public Agent() {
         setAgentLock(false);
-        Random rand = new Random();
-        strategy = rand.nextInt(21); //chooses which strategy the agent is on
         id = nextID;
         nextID++;
+        Random rand = RandomProvider.get();
+        if (!volatility) {
+            strategy = rand.nextInt(7); //chooses which strategy the agent is on (doesn't include the more volatile strategies)
+        } else {
+            strategy = rand.nextInt(10); //chooses which strategy the agent is on
+        }
 
+        /*
         //all the if statements below assign the agents to their strategy plan
         if (strategy == 10) {
             strategy = 0;
@@ -115,23 +123,24 @@ public class Agent {
                 strategy = 8;
             }
         }
+        */
 
         if (strategy == 1) {
-            name = "Momentum " + id;
+            name = "Aggressive Offers " + id;
         } else if (strategy == 2) {
             name = "Sentiment Trend " + id;
         } else if (strategy == 3) {
-            name = "VWAP " + id;
+            name = "Offer Only " + id;
         } else if (strategy == 4) {
             name = "RSI " + id;
         } else if (strategy == 5) {
             name = "RSI10 " + id;
         } else if (strategy == 6) {
-            name = "Offer Only " + id;
-        } else if (strategy == 7) {
             name = "Both RSI " + id;
+        } else if (strategy == 7) {
+            name = "VWAP " + id;
         } else if (strategy == 8) {
-            name = "Aggressive Offers " + id;
+            name = "Momentum " + id;
         } else if (strategy == 9) {
             name = "VWAP and Momentum " + id;
         } else {
@@ -175,7 +184,7 @@ public class Agent {
         setAgentLock(false);
         setPlacedBid(false);
         setPlacedAsk(false);
-        Random rand = new Random();
+        Random rand = RandomProvider.get();
         strategy = rand.nextInt(7);
         this.id = id; //Make sure nextId is handled okay with concurrency
         this.name = name;
@@ -192,7 +201,7 @@ public class Agent {
      * Sets the agents initial target price for the stock, target price can be created in a 10% range
      */
     public void createTargetPrice() {
-        Random rand = new Random();
+        Random rand = RandomProvider.get();
         int chance = rand.nextInt(10);
         if ((strategy == 1) || (strategy == 3) || (strategy == 9)) {
             //vwap and momentum don't want to buy at start
@@ -209,9 +218,11 @@ public class Agent {
      * a high sentiment value leads to a higher probability of a higher target price
      */
     public void changeTargetPrice() {
-        Random rand = new Random();
-        int chance = rand.nextInt(sentiment) + sentAdjust;
-        targetPrice = (float) (((float) Math.round((chance + 91) * targetPrice)) * 0.01);
+        Random rand = RandomProvider.get();
+        // centre at 100 when sentiment=20 (neutral); each point above/below shifts drift by 1%
+        int center = 100 + (sentiment - 20) + sentAdjust;
+        int multiplier = center + rand.nextInt(21) - 10;
+        targetPrice = (float) (((float) Math.round(multiplier * targetPrice)) * 0.01);
     }
 
     /**
@@ -220,7 +231,7 @@ public class Agent {
      * @return The starting funds for the agent.
      */
     private float assignFunds(){
-        Random rand = new Random();
+        Random rand = RandomProvider.get();
         int fundsInt = rand.nextInt(201);
         return (float) (MIN_STARTING_FUNDS + (fundsInt * fundsInt * fundsInt));
     }
@@ -299,14 +310,54 @@ public class Agent {
     }
 
     /**
-     * calculates the current portfolio value and adds it to the fundData list
+     * calculates the current portfolio value and adds it to the fundData list.
+     * Called by every strategy at the end of its run() — kept as the
+     * strategy-dispatch test proxy. The dashboard uses {@link #takeSnapshot}
+     * instead, which is round-aligned and called exactly once per agent
+     * regardless of strategy.
      * @param price the current stock price
      */
     public void addValue(float price) {
         float value = funds;
-        if (goodsOwned.size() > 0) {
+        if (!goodsOwned.isEmpty()) {
             value += (goodsOwned.get(0).getNumOwned() * price);
         }
         fundData.add(value);
+    }
+
+    /**
+     * Records a single per-round portfolio snapshot. Called once per agent per
+     * round by {@link trade.TradingCycle#createTrades(int)} after all strategy
+     * threads finish, so the snapshot series is fully aligned even for
+     * strategies that fire conditionally or twice per round.
+     */
+    public void takeSnapshot(int round, float price) {
+        int shares = !goodsOwned.isEmpty() ? goodsOwned.get(0).getNumOwned() : 0;
+        float cashReserved = 0f;
+        for (Offer bid : bidsPlaced) {
+            cashReserved += bid.getPrice() * bid.getNumOffered();
+        }
+        float lockedSharesValue = 0f;
+        for (Offer ask : asksPlaced) {
+            lockedSharesValue += ask.getNumOffered() * price;
+        }
+        float fund = funds + cashReserved + (shares * price);
+        snapshots.add(new Snapshot(round, fund, funds, cashReserved, shares, lockedSharesValue));
+    }
+
+    /** Append a fill to this agent's trade history. Called from {@link trade.Exchange#execute}. */
+    public void recordTrade(Trade t) {
+        tradeHistory.add(t);
+    }
+
+    /**
+     * Resets all mutable static state on this class. For test fixtures only.
+     */
+    public static void resetForTest() {
+        nextID = 0;
+        volatility = true;
+        sentAdjust = 0;
+        roundChange = 0;
+        sentiment = 0;
     }
 }

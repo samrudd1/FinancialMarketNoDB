@@ -61,7 +61,7 @@ public class RSI10 extends AbstractStrategy implements Runnable {
                 }
 
             } else if (rsi > 70) { //checks if RSI is over-bought
-                if (agent.getGoodsOwned().size() > 0) {
+                if (!agent.getGoodsOwned().isEmpty()) {
                     double tradeMult = 0.4 + ((rsi - 70) * 0.02); //calculates how much to sell based on the value, the higher the value, the better the sell opportunity
                     Offer offer = Exchange.getInstance().getGoods().get(0).getHighestBidOffer();
                     if (offer != null) {

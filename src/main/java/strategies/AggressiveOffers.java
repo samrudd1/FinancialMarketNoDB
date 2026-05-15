@@ -5,6 +5,7 @@ import good.Good;
 import lombok.SneakyThrows;
 import trade.Exchange;
 import trade.TradingCycle;
+import utilities.RandomProvider;
 
 /**
  * similar to the default class, but uses only offers, but can place them very frequently to allow it to trade a lot
@@ -30,7 +31,7 @@ public class AggressiveOffers extends AbstractStrategy implements Runnable {
     @SneakyThrows
     @Override
     public synchronized void run() {
-        float random = (float) Math.random();
+        float random = (float) RandomProvider.get().nextDouble();
         float lowestAsk = Exchange.getInstance().getGoods().get(0).getLowestAsk();
         float highestBid = Exchange.getInstance().getGoods().get(0).getHighestBid();
         float price = Exchange.getInstance().getPriceCheck();
@@ -44,13 +45,11 @@ public class AggressiveOffers extends AbstractStrategy implements Runnable {
 
         while(agent.getAgentLock()) wait();
         agent.setAgentLock(true);
+        cleanOffers(agent, price);
 
         if (agent.getFunds() > price) {
             if (!agent.getPlacedBid()) {
-                int purchaseLimit = (int) Math.floor((agent.getFunds() / price) * 0.4); //chooses how many shares they want to buy
-                if (purchaseLimit > 1000) {
-                    purchaseLimit = 1000;
-                }
+                int purchaseLimit = (int) Math.floor((agent.getFunds() / price) * 0.15); //chooses how many shares they want to buy
                 if ((agent.getTargetPrice() < lowestAsk) && (agent.getTargetPrice() > (price * 0.8))) {
                     if (purchaseLimit > 0) {
                         try {
@@ -74,12 +73,9 @@ public class AggressiveOffers extends AbstractStrategy implements Runnable {
             }
         }
 
-        if (agent.getGoodsOwned().size() > 0) {
+        if (!agent.getGoodsOwned().isEmpty()) {
             if (!agent.getPlacedAsk()) {
-                int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable() * 0.4); //chooses how many shares they want to sell
-                if (offering > 1000) {
-                    offering = 1000;
-                }
+                int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable() * 0.15); //chooses how many shares they want to sell
                 if ((agent.getTargetPrice() > highestBid) && (agent.getTargetPrice() < (price * 1.2))) {
                     if (offering > 0) {
                         try {

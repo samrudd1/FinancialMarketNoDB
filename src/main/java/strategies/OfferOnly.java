@@ -5,6 +5,7 @@ import good.Good;
 import lombok.SneakyThrows;
 import trade.Exchange;
 import trade.TradingCycle;
+import utilities.RandomProvider;
 
 /**
  * effectively just the offer part of the default strategy
@@ -31,7 +32,7 @@ public class OfferOnly extends AbstractStrategy implements Runnable {
     @SneakyThrows
     @Override
     public synchronized void run() {
-        float random = (float) Math.random();
+        float random = (float) RandomProvider.get().nextDouble();
         float lowestAsk = Exchange.getInstance().getGoods().get(0).getLowestAsk();
         float highestBid = Exchange.getInstance().getGoods().get(0).getHighestBid();
         float price = Exchange.getInstance().getPriceCheck();
@@ -44,13 +45,10 @@ public class OfferOnly extends AbstractStrategy implements Runnable {
         agent.setAgentLock(true);
         cleanOffers(agent, price);
 
-        if (agent.getGoodsOwned().size() > 0) {
+        if (!agent.getGoodsOwned().isEmpty()) {
             if (!agent.getPlacedAsk()) {
                 if ((agent.getTargetPrice() > highestBid) && (agent.getTargetPrice() < (price * 1.2))) {
-                    int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable() * 0.5);
-                    if (offering > 1000) {
-                        offering = 1000;
-                    }
+                    int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable() * 0.2);
                     if (offering > 0) {
                         try {
                             //places ask at target price above the highest bid
@@ -66,10 +64,7 @@ public class OfferOnly extends AbstractStrategy implements Runnable {
         if (agent.getFunds() > price) {
             if (!agent.getPlacedBid()) {
                 if ((agent.getTargetPrice() < lowestAsk) && (agent.getTargetPrice() > (price * 0.8))) {
-                    int purchaseLimit = (int) Math.floor((agent.getFunds() / price) * 0.5);
-                    if (purchaseLimit > 1000) {
-                        purchaseLimit = 1000;
-                    }
+                    int purchaseLimit = (int) Math.floor((agent.getFunds() / price) * 0.2);
                     if (purchaseLimit > 0) {
                         try {
                             //places a bid at target price below the lowest ask

@@ -25,4 +25,15 @@ public class Session {
      * private constructor to prevent instantiation.
      */
     private Session(){}
+
+    /**
+     * Resets all mutable static state on this class. For test fixtures only.
+     */
+    public static void resetForTest() {
+        numAgents = 0;
+        numOfRounds = 0;
+        agents.clear();
+        goods.clear();
+        ownerships.clear();
+    }
 }

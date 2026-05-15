@@ -17,11 +17,11 @@ import java.util.Scanner;
 public class RunMarket {
     public static void main(String[] args) throws Exception {
 
-        Scanner input = new Scanner(System.in);
-
         int startingAgentNo = 0;
         int startingGoodNo = 0;
         int noOfRounds = 0;
+
+        try (Scanner input = new Scanner(System.in)) {
         //asks for how many agents
         boolean pass = false;
         while (!pass) {
@@ -30,7 +30,7 @@ public class RunMarket {
                 startingAgentNo = input.nextInt();
                 pass = true;
             } else {
-                char forceWait = Character.toLowerCase(input.next().charAt(0));
+                input.next();
             }
         }
         //asks for how many shares
@@ -41,7 +41,7 @@ public class RunMarket {
                 startingGoodNo = input.nextInt();
                 pass = true;
             } else {
-                char forceWait = Character.toLowerCase(input.next().charAt(0));
+                input.next();
             }
         }
         //asks for how many rounds to trade
@@ -56,20 +56,27 @@ public class RunMarket {
                     System.out.println("Please have at least 10 rounds");
                 }
             } else {
-                char forceWait = Character.toLowerCase(input.next().charAt(0));
+                input.next();
             }
         }
         //asks if they would like a live price chart
         pass = false;
         while (!pass) {
-            log.info("Would you like a live stock chart? [y/n]");
+            log.info("Would you like a live stock chart? [y/n/f]  (f = forced update every round, may slow simulation)");
             char liveChart = Character.toLowerCase(input.next().charAt(0));
             if (liveChart == 'y') {
                 Exchange.setLiveActive(true);
+                Exchange.setLiveForced(false);
                 pass = true;
             }
             if (liveChart == 'n') {
                 Exchange.setLiveActive(false);
+                Exchange.setLiveForced(false);
+                pass = true;
+            }
+            if (liveChart == 'f') {
+                Exchange.setLiveActive(true);
+                Exchange.setLiveForced(true);
                 pass = true;
             }
         }
@@ -103,6 +110,7 @@ public class RunMarket {
                 pass = true;
             }
         }
+        } // closes Scanner
 
         //sets data
         Session.setNumAgents(startingAgentNo);

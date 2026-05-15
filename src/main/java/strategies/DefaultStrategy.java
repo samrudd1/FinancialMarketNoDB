@@ -6,6 +6,7 @@ import good.Offer;
 import lombok.SneakyThrows;
 import trade.Exchange;
 import trade.TradingCycle;
+import utilities.RandomProvider;
 
 /**
  * first strategy created, can place offers and trade with other agent's offers
@@ -31,7 +32,7 @@ public class DefaultStrategy extends AbstractStrategy implements Runnable {
     @SneakyThrows
     @Override
     public synchronized void run() {
-        float random = (float) Math.random();
+        float random = (float) RandomProvider.get().nextDouble();
         float lowestAsk = Exchange.getInstance().getGoods().get(0).getLowestAsk();
         float highestBid = Exchange.getInstance().getGoods().get(0).getHighestBid();
         float price = Exchange.getInstance().getPriceCheck();
@@ -44,11 +45,8 @@ public class DefaultStrategy extends AbstractStrategy implements Runnable {
         agent.setAgentLock(true);
         cleanOffers(agent, price); //clears offers that are far away from the current price
 
-        if (agent.getGoodsOwned().size() > 0) { //if has shares
-            int offering = (int) Math.round((float) agent.getGoodsOwned().get(0).getNumAvailable() * 0.25); //finds the number of shares to sell
-            if (offering > 1000) {
-                offering = 1000;
-            }
+        if (!agent.getGoodsOwned().isEmpty()) { //if has shares
+            int offering = (int) Math.round((float) agent.getGoodsOwned().get(0).getNumAvailable() * 0.1); //finds the number of shares to sell
             if ((agent.getTargetPrice() > highestBid) && (agent.getTargetPrice() < (price * 1.1))) {
                 if (!agent.getPlacedAsk()) {
                     if (offering > 0) {
@@ -64,10 +62,7 @@ public class DefaultStrategy extends AbstractStrategy implements Runnable {
         }
 
         if (agent.getFunds() > price) {
-            int purchaseLimit = (int) Math.floor(((agent.getFunds() / price) * 0.25)); //finds the number of shares to buy
-            if (purchaseLimit > 1000) {
-                purchaseLimit = 1000;
-            }
+            int purchaseLimit = (int) Math.floor(((agent.getFunds() / price) * 0.1)); //finds the number of shares to buy
             if ((agent.getTargetPrice() < lowestAsk) && (agent.getTargetPrice() > (price * 0.9))) {
                 if (!agent.getPlacedBid()) {
                     if (purchaseLimit > 0) {
@@ -82,7 +77,7 @@ public class DefaultStrategy extends AbstractStrategy implements Runnable {
             }
         }
 
-        if (agent.getGoodsOwned().size() > 0) {
+        if (!agent.getGoodsOwned().isEmpty()) {
             if ((agent.getTargetPrice() < highestBid) && (highestBid != 0)) {
                 Offer offer = Exchange.getInstance().getGoods().get(0).getHighestBidOffer(); //gets offer of the highest bid
                 if (offer != null) {

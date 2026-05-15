@@ -1,9 +1,6 @@
 package trade;
 
-import agent.OwnedGood;
 import lombok.Getter;
-
-import java.util.logging.Logger;
 
 /**
  * used to store data from each trade
@@ -11,7 +8,7 @@ import java.util.logging.Logger;
  * @since 13/04/22
  * @author github.com/samrudd1
  */
-public class TradeData implements Comparable {
+public class TradeData implements Comparable<TradeData> {
     @Getter private final float price; //price of the trade
     @Getter private final int volume; //number of shares traded
     @Getter private final int round; //the round the trade was processed
@@ -27,12 +24,7 @@ public class TradeData implements Comparable {
      * @return comparison of rounds
      */
     @Override
-    public int compareTo(Object o) {
-        try{
-            TradeData other = (TradeData) o;
-            return Integer.compare(this.getRound(), other.getRound()); //orders objects by round number
-        } catch (Exception e){
-            return 1;
-        }
+    public int compareTo(TradeData o) {
+        return Integer.compare(this.round, o.round);
     }
 }

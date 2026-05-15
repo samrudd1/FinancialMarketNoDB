@@ -2,6 +2,7 @@ package trade;
 
 import agent.Agent;
 import agent.OwnedGood;
+import agent.Trade;
 import good.Good;
 import good.Offer;
 import lombok.Getter;
@@ -25,11 +26,23 @@ public class Exchange {
     public void addGood(Good good) {
         goods.add(good);
     } //adds a stock object to the list
+
+    /**
+     * Returns the live chart, constructing it on the first call. Lazy so headless
+     * tests that never enable the live chart never instantiate a JFrame.
+     */
+    public static LineChartLive getLiveChart() {
+        if (liveChart == null) {
+            liveChart = new LineChartLive();
+        }
+        return liveChart;
+    }
     @Getter private final ArrayList<Float> avg20 = new ArrayList<>() ; //holds the last 20 trades so an average can be created
     private float lastAvg = 0; //the value of the last average price
     @Getter @Setter private float priceCheck; //used as more of an average for strategies to check prices with
-    @Getter private static final LineChartLive liveChart = new LineChartLive(); //live price chart that can be displayed and updated in real time
+    private static LineChartLive liveChart; //lazy-initialised on first getLiveChart() call so headless tests don't open a window
     @Getter @Setter private static boolean liveActive = false; //boolean to toggle the live chart
+    @Getter @Setter private static boolean liveForced = false; //forces a chart update at the end of every round
     public static final String ANSI_GREEN = "\u001B[32m";
     public static final String ANSI_RED = "\u001B[31m";
     public static final String ANSI_RESET = "\u001B[0m";
@@ -56,6 +69,14 @@ public class Exchange {
     @Getter private static float rsiP = 0; //current RSI 10 value
     @Getter private static final ArrayList<String> signalLog = new ArrayList<>(); //list of signal logs
     @Getter @Setter private static boolean signalLogging; //toggles if logs are kept
+    @Getter private static final ArrayList<Integer> sentimentList = new ArrayList<>(); //per-round sentiment value, fed to dashboard
+    @Getter private static final ArrayList<Float> vwapList = new ArrayList<>(); //per-round VWAP snapshot, fed to dashboard
+
+    /** Append the current sentiment value for the round just completed. Called from {@code TradingCycle.mutate}. */
+    public static void addSentimentTick(int s) { sentimentList.add(s); }
+
+    /** Append the current VWAP value for the round just completed. */
+    public static void addVwapTick(float v) { vwapList.add(v); }
 
     /**
      * the method used to execute all trades on the market
@@ -88,6 +109,7 @@ public class Exchange {
                     if (offer.getNumOffered() > 0) {
 
                         try { //trade execution
+                            boolean offerIsAsk = Good.getAsk().contains(offer); // capture before offer is removed from book
                             if (offer.getNumOffered() < amountBought) {
                                 amountBought = offer.getNumOffered();
                             }
@@ -103,21 +125,37 @@ public class Exchange {
                                 OwnedGood newOne = new OwnedGood(buyer, offer.getGood(), newNumOwned, newAvailable, newBoughtAt, false);
                                 buyer.getGoodsOwned().set(0, newOne);
                             }
+                            //decrement seller's share count
+                            if (!seller.getGoodsOwned().isEmpty()) {
+                                OwnedGood sellerOwned = seller.getGoodsOwned().get(0);
+                                sellerOwned.setNumOwned(sellerOwned.getNumOwned() - amountBought);
+                                if (!offerIsAsk) {
+                                    // seller hit a bid directly — numAvailable was not pre-locked in createAsk()
+                                    sellerOwned.setNumAvailable(sellerOwned.getNumAvailable() - amountBought);
+                                }
+                                // if offerIsAsk, numAvailable was already locked when the ask was placed in createAsk()
+                            }
                             offer.getGood().setPrice(offer, amountBought); //updates stock price
                             if (amountBought == offer.getNumOffered()) {
-                                //removes offer from the order book
-                                if (Good.getAsk().contains(offer)) {
-                                    offer.setNumOffered(0);
-                                    offer.getGood().removeAsk(offer);
+                                // Full fill: remove atomically via *Full variants that zero numOffered
+                                // inside the book lock, so no zero-quantity offer is ever visible.
+                                if (offerIsAsk) {
+                                    offer.getGood().removeAskFull(offer);
                                 } else {
-                                    offer.setNumOffered(0);
-                                    offer.getGood().removeBid(offer);
+                                    offer.getGood().removeBidFull(offer);
                                 }
                             } else {
                                 offer.setNumOffered(offer.getNumOffered() - amountBought); //subtracts the number bought from the offer
                             }
-                            buyer.setFunds(buyer.getFunds() - (offer.getPrice() * amountBought)); //changes the buyer's funds
+                            //only charge buyer when hitting an ask — bid makers already reserved funds in createBid()
+                            if (offerIsAsk) {
+                                buyer.setFunds(buyer.getFunds() - (offer.getPrice() * amountBought));
+                            }
                             seller.setFunds(seller.getFunds() + (offer.getPrice() * amountBought)); //changes the seller's funds
+                            // record the fill on both sides for the dashboard's per-agent trade table
+                            float p = offer.getPrice();
+                            buyer.recordTrade(new Trade(roundNum, Trade.Side.BUY,  amountBought, p, seller.getId(), seller.getName()));
+                            seller.recordTrade(new Trade(roundNum, Trade.Side.SELL, amountBought, p, buyer.getId(),  buyer.getName()));
                         } catch (Exception e) {
                             complete = false; //trade failed
                         }
@@ -130,7 +168,7 @@ public class Exchange {
                         }
                     }
                     if (roundNum > round) { // if new round
-                        if (roundFinalPrice.size() > 0) {
+                        if (!roundFinalPrice.isEmpty()) {
                             roundPrice = roundFinalPrice.get(roundFinalPrice.size() - 1);
                         }
                         roundFinalPrice.add(lastPrice);
@@ -143,7 +181,6 @@ public class Exchange {
                 TradingCycle.setAgentComplete(true);
                 exchangeLock = false;
                 notifyAll();
-                tc.notifyAll();
 
                 Good.addTradeData(offer.getPrice(), amountBought, roundNum); //adds trade information to list
 
@@ -249,14 +286,6 @@ public class Exchange {
                 TradingCycle.setAgentComplete(true);
                 exchangeLock = false;
                 notifyAll();
-                tc.notifyAll();
-            }
-        }
-        //if live chart is enabled, chart is updated every 10 trades
-        if (liveActive) {
-            if (Good.getNumTrades() % 10 == 0) {
-                Runnable lc = new Thread(liveChart);
-                lc.run();
             }
         }
         return complete;
@@ -279,25 +308,64 @@ public class Exchange {
      */
     private void tradeTally(int chance) {
         if (chance == 1) {
-            momCount += 1;
+            aggressiveCount += 1;
         } else if (chance == 2) {
             sentCount += 1;
         } else if (chance == 3) {
-            vwapCount += 1;
+            offerCount += 1;
         } else if (chance == 4) {
             rsiCount += 1;
         } else if (chance == 5) {
             rsi10Count += 1;
         } else if (chance == 6) {
-            offerCount += 1;
-        } else if (chance == 7) {
             bothCount += 1;
+        } else if (chance == 7) {
+            vwapCount += 1;
         } else if (chance == 8) {
-            aggressiveCount += 1;
+            momCount += 1;
         } else if (chance == 9) {
             momVwapCount += 1;
         } else {
             defaultCount += 1;
         }
+    }
+
+    /**
+     * Resets all mutable static and singleton-instance state on this class.
+     * For test fixtures only.
+     */
+    public static void resetForTest() {
+        Exchange e = exchange;
+        e.goods.clear();
+        e.avg20.clear();
+        e.lastAvg = 0;
+        e.priceCheck = 0;
+        liveChart = null;
+        liveActive = false;
+        liveForced = false;
+        lastPrice = 0;
+        defaultCount = 0;
+        sentCount = 0;
+        momCount = 0;
+        vwapCount = 0;
+        momVwapCount = 0;
+        rsiCount = 0;
+        rsi10Count = 0;
+        bothCount = 0;
+        offerCount = 0;
+        aggressiveCount = 0;
+        round = 0;
+        newRound = false;
+        roundFinalPrice.clear();
+        roundPrice = 0;
+        rsiList.clear();
+        rsi = 0;
+        rsiPList.clear();
+        rsiP = 0;
+        signalLog.clear();
+        signalLogging = false;
+        sentimentList.clear();
+        vwapList.clear();
+        exchangeLock = false;
     }
 }

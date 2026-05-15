@@ -6,6 +6,8 @@ import good.Good;
 import good.Offer;
 import trade.TradingCycle;
 
+import java.util.ArrayList;
+
 /**
  * abstract class used as a template for all strategies
  * @version 1.0
@@ -39,11 +41,14 @@ public abstract class AbstractStrategy {
     void createBid(float price, Good good, int numOffered) throws InterruptedException {
         if ((price < good.getLowestAsk()) && (numOffered > 0)) { //checks if bid is valid
             Offer newBid = new Offer(price, agent, good, numOffered);
-            good.addBid(newBid); //adds bid to the order book
-            agent.setFunds((agent.getFunds() - (price * numOffered))); //takes money from agent to cover the bid
-            agent.getBidsPlaced().trimToSize();
-            agent.getBidsPlaced().add(newBid); //adds bid to list so agent can access it later
-            agent.setPlacedBid(true); //stops agents placing lots of bids consecutively
+            // Only commit funds and track the offer when the book actually accepted it.
+            // addBid can silently drop offers when the ask side is empty and bids exist;
+            // deducting funds for a dropped offer would permanently lose that money.
+            if (good.addBid(newBid)) {
+                agent.setFunds((agent.getFunds() - (price * numOffered))); //takes money from agent to cover the bid
+                agent.getBidsPlaced().add(newBid); //adds bid to list so agent can access it later
+                agent.setPlacedBid(true); //stops agents placing lots of bids consecutively
+            }
         }
     }
 
@@ -57,11 +62,14 @@ public abstract class AbstractStrategy {
     void createAsk(float price, OwnedGood good, int numOffered) throws InterruptedException {
         if ((price > good.getGood().getHighestBid()) && (numOffered > 0)) { // checks if offer is valid
             Offer newAsk = new Offer(price, agent, good.getGood(), numOffered);
-            good.getGood().addAsk(newAsk); //adds ask to the order book
-            good.setNumAvailable((good.getNumAvailable() - numOffered)); //makes shares unavailable
-            agent.getAsksPlaced().trimToSize();
-            agent.getAsksPlaced().add(newAsk); //adds offer to list so agent can access it later
-            agent.setPlacedAsk(true); //stops agents placing lots of asks consecutively
+            // Only lock shares and track the offer when the book actually accepted it.
+            // addAsk can silently drop offers when the bid side is empty and asks exist;
+            // decrementing numAvailable for a dropped offer would permanently lock those shares.
+            if (good.getGood().addAsk(newAsk)) {
+                good.setNumAvailable((good.getNumAvailable() - numOffered)); //makes shares unavailable
+                agent.getAsksPlaced().add(newAsk); //adds offer to list so agent can access it later
+                agent.setPlacedAsk(true); //stops agents placing lots of asks consecutively
+            }
         }
     }
 
@@ -73,23 +81,44 @@ public abstract class AbstractStrategy {
      * @throws InterruptedException from the wait() function in the stock object
      */
     void cleanOffers(Agent agent, float price) throws InterruptedException {
-        if (agent.getBidsPlaced().size() > 0) {
-            agent.getBidsPlaced().trimToSize();
+        if (!agent.getBidsPlaced().isEmpty()) {
+            // First pass: collect stale (too far below market) and dead (already filled/removed) bids.
+            // Two-pass pattern avoids ConcurrentModificationException on bidsPlaced.
+            ArrayList<Offer> stale = new ArrayList<>();
+            ArrayList<Offer> dead  = new ArrayList<>();
             for (Offer offer : agent.getBidsPlaced()) {
-                if (offer.getPrice() < (price * 0.7)) { //if 20% lower than price then remove
-                    offer.getGood().removeBid(offer);
+                if (!Good.getBid().contains(offer)) {
+                    dead.add(offer); // filled or previously cleaned — remove from tracking only
+                } else if (offer.getPrice() < (price * 0.7)) { // >30% below market — cancel
+                    stale.add(offer);
+                } else if (offer.getPrice() >= (price * 1.05)) { // at/above Exchange price-band ceiling — can never fill
+                    stale.add(offer);
                 }
             }
-            agent.getBidsPlaced().trimToSize();
+            // Second pass: cancel stale bids from the book (refunds funds via Agent.removedBid).
+            for (Offer offer : stale) {
+                offer.getGood().removeBid(offer);
+            }
+            agent.getBidsPlaced().removeAll(stale);
+            agent.getBidsPlaced().removeAll(dead);
         }
-        if (agent.getAsksPlaced().size() > 0) {
-            agent.getAsksPlaced().trimToSize();
+        if (!agent.getAsksPlaced().isEmpty()) {
+            ArrayList<Offer> stale = new ArrayList<>();
+            ArrayList<Offer> dead  = new ArrayList<>();
             for (Offer offer : agent.getAsksPlaced()) {
-                if (offer.getPrice() > (price * 1.4)) { //if 20% higher than price then remove
-                    offer.getGood().removeAsk(offer);
+                if (!Good.getAsk().contains(offer)) {
+                    dead.add(offer); // filled or previously cleaned — remove from tracking only
+                } else if (offer.getPrice() > (price * 1.4)) { // >40% above market — cancel
+                    stale.add(offer);
+                } else if (offer.getPrice() <= (price * 0.96)) { // at/below Exchange price-band floor — can never fill
+                    stale.add(offer);
                 }
             }
-            agent.getAsksPlaced().trimToSize();
+            for (Offer offer : stale) {
+                offer.getGood().removeAsk(offer);
+            }
+            agent.getAsksPlaced().removeAll(stale);
+            agent.getAsksPlaced().removeAll(dead);
         }
     }
 }

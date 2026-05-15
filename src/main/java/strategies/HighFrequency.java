@@ -68,7 +68,7 @@ public class HighFrequency extends AbstractStrategy implements Runnable {
                 }
             }
 
-            if (agent.getGoodsOwned().size() > 0) {
+            if (!agent.getGoodsOwned().isEmpty()) {
                 highestBid = good.getHighestBid();
                 secondHighestBid = good.getSecondHighestBid();
                 if ((highestBid != 0) && (secondHighestBid != 0)) { //checks both offers exist

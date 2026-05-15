@@ -11,7 +11,7 @@ import trade.Exchange;
 import trade.TradeData;
 
 import java.util.*;
-import java.util.logging.Logger;
+import utilities.RandomProvider;
 import utilities.SortedListPackage.*;
 
 /**
@@ -23,7 +23,6 @@ import utilities.SortedListPackage.*;
 @Log
 @EqualsAndHashCode
 public class Good {
-    private static final Logger LOGGER = Logger.getLogger(Good.class.getName());
     @Getter private final int id;
     @Getter static private String name = "Stock";
     @Getter static private float prevPrice;
@@ -102,7 +101,7 @@ public class Good {
     public synchronized float getHighestBid() throws InterruptedException {
         while (bidLock) wait(); //concurrency locks
         bidLock = true;
-        if (bid.size() > 0) {
+        if (!bid.isEmpty()) {
             bidLock = false;
             notify();
             return bid.get(bid.size() - 1).getPrice();
@@ -120,7 +119,7 @@ public class Good {
     public synchronized float getLowestAsk() throws InterruptedException {
         while (askLock) wait(); //concurrency locks
         askLock = true;
-        if (ask.size() > 0) {
+        if (!ask.isEmpty()) {
             askLock = false;
             notify();
             return ask.get(0).getPrice();
@@ -174,7 +173,7 @@ public class Good {
     public synchronized Offer getHighestBidOffer() throws InterruptedException {
         while (bidLock) wait();
         bidLock = true;
-        if (bid.size() > 0) {
+        if (!bid.isEmpty()) {
             if (bid.get(bid.size() - 1).getNumOffered() == 0) {
                 bid.remove(bid.get(bid.size() - 1));
                 bidLock = false;
@@ -198,7 +197,7 @@ public class Good {
     public synchronized Offer getLowestAskOffer() throws InterruptedException {
         while (askLock) wait();
         askLock = true;
-        if (ask.size() > 0) {
+        if (!ask.isEmpty()) {
             if (ask.get(0).getNumOffered() == 0) {
                 ask.remove(ask.get(0));
                 askLock = false;
@@ -268,47 +267,59 @@ public class Good {
     /**
      * adds a new bid offer to the order book
      * @param offer the new bid
+     * @return true if the offer was added, false if the book rejected it
      * @throws InterruptedException from wait() function
      */
-    public synchronized void addBid(Offer offer) throws InterruptedException {
+    public synchronized boolean addBid(Offer offer) throws InterruptedException {
         while (bidLock) wait();
         bidLock = true;
         //if ask is empty but bid isn't, no orders are added, otherwise bid could go super high and no asks could be added
-        if ((ask.size() == 0) && (bid.size() > 0)) {
+        if (ask.isEmpty() && !bid.isEmpty()) {
             bidLock = false;
             notify();
+            return false;
         } else {
-            if (offer.getPrice() > 0) {
+            if (offer.getPrice() > 0 && offer.getNumOffered() > 0) {
                 bid.add(offer);
+                bidLock = false;
+                notify();
+                return true;
             }
             bidLock = false;
             notify();
+            return false;
         }
     }
 
     /**
      * adds a new ask offer to the order book
      * @param offer the new ask
+     * @return true if the offer was added, false if the book rejected it
      * @throws InterruptedException from wait() function
      */
-    public synchronized void addAsk(Offer offer) throws InterruptedException {
+    public synchronized boolean addAsk(Offer offer) throws InterruptedException {
         while (askLock) wait();
         askLock = true;
         //if bid is empty but ask isn't, no orders are added, otherwise ask could go super low and no bids could be added
-        if ((bid.size() == 0) && (ask.size() > 0)) {
+        if (bid.isEmpty() && !ask.isEmpty()) {
             askLock = false;
             notify();
+            return false;
         } else {
-            if (offer.getPrice() > 0) {
+            if (offer.getPrice() > 0 && offer.getNumOffered() > 0) {
                 ask.add(offer);
+                askLock = false;
+                notify();
+                return true;
             }
             askLock = false;
             notify();
+            return false;
         }
     }
 
     /**
-     * removes a bid offer from the order book
+     * removes a bid offer from the order book (used by cleanOffers for cancellations)
      * @param offer the offer to be removed
      * @throws InterruptedException from wait() function
      */
@@ -324,7 +335,26 @@ public class Good {
     }
 
     /**
-     * removes an ask offer from the order book
+     * removes a bid offer that has been fully filled (used by Exchange.execute only).
+     * Zeroes numOffered atomically inside the bidLock, after removal from the book,
+     * so no zero-quantity offer is ever visible to concurrent readers.
+     * @param offer the fully-filled offer to remove
+     * @throws InterruptedException from wait() function
+     */
+    public synchronized void removeBidFull(Offer offer) throws InterruptedException {
+        while (bidLock) wait();
+        bidLock = true;
+        if (bid.contains(offer)) {
+            bid.remove(offer);
+            offer.setNumOffered(0); // zeroed after removal — never visible in the book at qty 0
+            offer.getOfferMaker().removedBid(offer); // sees numOffered=0, so refunds 0 (correct for a fill)
+        }
+        bidLock = false;
+        notify();
+    }
+
+    /**
+     * removes an ask offer from the order book (used by cleanOffers for cancellations)
      * @param offer the offer to be removed
      * @throws InterruptedException from wait() function
      */
@@ -334,6 +364,25 @@ public class Good {
         if (ask.contains(offer)) {
             ask.remove(offer);
             offer.getOfferMaker().removeAsk(offer);
+        }
+        askLock = false;
+        notify();
+    }
+
+    /**
+     * removes an ask offer that has been fully filled (used by Exchange.execute only).
+     * Zeroes numOffered atomically inside the askLock, after removal from the book,
+     * so no zero-quantity offer is ever visible to concurrent readers.
+     * @param offer the fully-filled offer to remove
+     * @throws InterruptedException from wait() function
+     */
+    public synchronized void removeAskFull(Offer offer) throws InterruptedException {
+        while (askLock) wait();
+        askLock = true;
+        if (ask.contains(offer)) {
+            ask.remove(offer);
+            offer.setNumOffered(0); // zeroed after removal — never visible in the book at qty 0
+            offer.getOfferMaker().removeAsk(offer); // sees numOffered=0, returns 0 shares (correct for a fill)
         }
         askLock = false;
         notify();
@@ -353,7 +402,7 @@ public class Good {
      * creates the starting price for the stock to be offered
      */
     private void createPrice(){
-        Random rand = new Random();
+        Random rand = RandomProvider.get();
         float floor = 20;
         float ceiling = 100;
         price = rand.nextInt((int)(ceiling - floor) + 1) + floor;
@@ -378,6 +427,32 @@ public class Good {
         if (newPrice < lowest) { lowest = newPrice; }
         vwap = (float) (((vwap * volume) + (offer.getPrice() * traded)) / (volume + traded)); //calculates new VWAP value
         volume += traded;
+    }
+
+    /**
+     * Resets all mutable static state on this class. For test fixtures only.
+     */
+    public static void resetForTest() {
+        name = "Stock";
+        prevPrice = 0;
+        price = 0;
+        startingPrice = 0;
+        vwap = 0;
+        volume = 0;
+        lowest = 110;
+        highest = 1;
+        numTrades = 0;
+        bid.clear();
+        ask.clear();
+        bidLock = false;
+        askLock = false;
+        company = null;
+        outstandingShares = 0;
+        directlyAvailable = 0;
+        priceData.clear();
+        priceList.clear();
+        avgPriceList.clear();
+        tradeData.clear();
     }
 }
 

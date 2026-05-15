@@ -58,7 +58,7 @@ public class VWAP extends AbstractStrategy implements Runnable {
             }
 
         } else  if ((price < Good.getVwap()) && (agent.getPrevPriceUp())) { //if price has moved below VWAP and the agent hasn't just sold
-            if (agent.getGoodsOwned().size() > 0) {
+            if (!agent.getGoodsOwned().isEmpty()) {
                 Offer offer = Exchange.getInstance().getGoods().get(0).getHighestBidOffer();
                 if (offer != null) {
                     int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable());

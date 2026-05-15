@@ -57,8 +57,8 @@ public class SentimentTrend extends AbstractStrategy implements Runnable {
                 }
             }
 
-        } else  if (Agent.getSentiment() < 18){ //if negative sentiment
-            if (agent.getGoodsOwned().size() > 0) {
+        } else  if (Agent.getSentiment() < 19){ //if negative sentiment
+            if (!agent.getGoodsOwned().isEmpty()) {
                 Offer offer = Exchange.getInstance().getGoods().get(0).getHighestBidOffer();
                 if (offer != null) {
                     int offering = (int) Math.floor(agent.getGoodsOwned().get(0).getNumAvailable());

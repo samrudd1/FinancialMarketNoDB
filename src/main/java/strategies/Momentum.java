@@ -64,7 +64,7 @@ public class Momentum extends AbstractStrategy implements Runnable {
                 }
 
             } else if ((priceDiff <= -0.03) && (priceDiff >= -0.1) && (agent.getPrevPriceUp())) {
-                if (agent.getGoodsOwned().size() > 0) {
+                if (!agent.getGoodsOwned().isEmpty()) {
                     if (price > (Good.getVwap() * 0.7)) { //stops it selling far below historical prices, as likely to return
                         Offer offer = Exchange.getInstance().getGoods().get(0).getHighestBidOffer();
                         if (offer != null) {
